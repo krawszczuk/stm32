@@ -1,0 +1,8 @@
+STM32F103C8T6
+testing stm32 bluepill
+
+-using adxl345 accelerometer to measure g-force using interrupts
+
+-passing through RC reciver signal to servo in normal operation
+
+-modifying reciver signal when g-force threshold hit to prevent RC car rollover
