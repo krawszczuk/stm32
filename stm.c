@@ -28,24 +28,34 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef enum
+{
+    PASSTHROUGH,
+    CENTER,
+    LEFT,
+    RIGHT
+} CorrectionState;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define adxlWake 8
-#define adxlWakeAdr 45
-#define adxlIntInv 32
-#define adxlIntInvAdr 49
-#define adxlIntEnl 128
-#define adxlIntEnlAdr 46
+#define ADXL_WAKE 8
+#define ADXL_WAKE_ADR 45
+#define ADXL_INT_ENL 128
+#define ADXL_INT_ENL_ADR 46
+
+#define INPUT_TIMER_PERIOD_DURATION_MILI 20.0f
+#define PERIOD 3600.0f
 
 #define CENTERSTEER 540
-#define RIGHTSTEER 720
 #define LEFTSTEER 360
+#define RIGHTSTEER 720
 #define MAXACC 200
 #define RETURNTHRES 30
-#define COUNTERTIME 500000
+#define COUNTERTIME 500
+#define LEFT_STEER_THRESHOLD 350
+#define	RIGHT_STEER_THRESHOLD 730
+#define CHANGE_THRESHOLD 185
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -55,20 +65,21 @@
 
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
+
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
+uint32_t timeInCurrSt = 0;
 volatile float pulseWidth = 0.0;
 volatile float sentWidth = 540.0;
-const float inputTimerPeriodDuration_mili = 20.0;
+//const float inputTimerPeriodDuration_mili = 20.0;
 volatile uint16_t pwm = CENTERSTEER;
 volatile uint16_t lastpwm = CENTERSTEER;
-volatile uint8_t acc[6];
-int16_t przyspieszenie=0;
-int16_t absprzyspieszenie=0;
-int16_t *pPrzyspieszenie;
-int16_t *pAbsPrzyspieszenie;
+int16_t acceleration=0;
+int16_t absAcceleration=0;
+volatile uint8_t mainFuncTimer=0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,15 +88,17 @@ static void MX_GPIO_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-void  spiWrite(uint8_t gdzie, uint8_t co);
-uint8_t spiRead(uint8_t gdzie);
+void  spiWrite(uint8_t handler[2]);
+uint8_t spiRead(uint8_t where);
 void spiReadOutput();
+void MainFunc();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+CorrectionState currSt = PASSTHROUGH;
 /* USER CODE END 0 */
 
 /**
@@ -95,7 +108,7 @@ void spiReadOutput();
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
+	uint8_t spiWriteHandler[]={0,0};
   /* USER CODE END 1 */
   
 
@@ -120,103 +133,28 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM4_Init();
   MX_SPI1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_Base_Start_IT(&htim2);
   HAL_TIM_IC_Start(&htim4, TIM_CHANNEL_1);
   HAL_TIM_IC_Start(&htim4, TIM_CHANNEL_2);
 
   //SPI setup
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
   HAL_Delay(1);
-  spiWrite(adxlWakeAdr, adxlWake);
-  spiWrite(adxlIntEnlAdr, adxlIntEnl);
-
-  uint i=0;
-  pPrzyspieszenie=&przyspieszenie;
-  pAbsPrzyspieszenie=&absprzyspieszenie;
+  spiWriteHandler[0]=ADXL_WAKE_ADR;
+  spiWriteHandler[1]=ADXL_WAKE;
+  spiWrite(spiWriteHandler); //wake adxl
+  spiWriteHandler[0]=ADXL_INT_ENL_ADR;
+  spiWriteHandler[1]=ADXL_INT_ENL;
+  spiWrite(spiWriteHandler); //adxl interrupts enable
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  if(*pAbsPrzyspieszenie>MAXACC) //safemode
-	  {
-		   while(*pAbsPrzyspieszenie>MAXACC-RETURNTHRES)
-		   {
-			   pwm=CENTERSTEER;
-			   TIM1->CCR1=pwm;
-			   lastpwm=pwm;
-			   i++;
-			   if(pwm==CENTERSTEER&&(i>COUNTERTIME))
-			   {
-				   while(*pAbsPrzyspieszenie>MAXACC-RETURNTHRES)
-				   {
-					   if(*pPrzyspieszenie>0)
-					   {
-						   pwm=LEFTSTEER;
-						   TIM1->CCR1=pwm;
-						   lastpwm=pwm;
-					   }
-					   else if (*pPrzyspieszenie<0)
-					   {
-						   pwm=RIGHTSTEER;
-						   TIM1->CCR1=pwm;
-						   lastpwm=pwm;
-					   }
-				   }
-
-				   i=0;
-			   }
-		   }
-		   /*
-		  if(pwm==CENTERSTEER&&(i>RETURNTHRES))
-		  {
-			  while(*pAbsPrzyspieszenie>MAXACC)
-			  {
-				  if(*pPrzyspieszenie>0)
-				  {
-					  pwm=LEFTSTEER;
-					  TIM1->CCR1=pwm;
-					  lastpwm=pwm;
-				  }
-				  else if (*pPrzyspieszenie<0)
-				  {
-					  pwm=RIGHTSTEER;
-					  TIM1->CCR1=pwm;
-					  lastpwm=pwm;
-				  }
-
-				  asm("NOP");
-			  }
-
-			  i=0;
-		  }
-		  else
-		  {
-			  pwm=CENTERSTEER;
-			  TIM1->CCR1=pwm;
-			  lastpwm=pwm;
-			  i++;
-		  }*/
-	  }
-	  else //passthrough mode
-	  {
-		  pulseWidth = ((HAL_TIM_ReadCapturedValue(&htim4, TIM_CHANNEL_2)+1)*inputTimerPeriodDuration_mili)/3600.0;
-		  sentWidth= CENTERSTEER - (1.5-pulseWidth)*360;
-		  pwm=sentWidth;
-
-		  if(!(pwm<350 || pwm>730 || abs(pwm-lastpwm)>185))
-		  {
-			  TIM1->CCR1=pwm;
-			  lastpwm=pwm;
-		  }
-
-		  i=0;
-
-	  }
-
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -375,6 +313,51 @@ static void MX_TIM1_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 199;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 3599;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief TIM4 Initialization Function
   * @param None
   * @retval None
@@ -459,6 +442,9 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+
   /*Configure GPIO pin : PC13 */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -479,6 +465,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PB12 */
+  GPIO_InitStruct.Pin = GPIO_PIN_12;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
@@ -488,30 +481,44 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-	  if(GPIO_Pin == GPIO_PIN_0)
+	  if(GPIO_Pin == GPIO_PIN_0) //interrupt - adxl data ready to read
 	  {
-		  spiReadOutput();
+		  spiReadOutput();	//read acceleration from adxl
+		  MainFunc();	//signal handling
 	  }
 }
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if(htim->Instance == TIM2)
+	{
+		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_12);
+		if(mainFuncTimer>100) //if adxl fail then passthrough
+		{
+			acceleration=0;
+			absAcceleration=0;
+			MainFunc(); //signal handling
+		}
+		mainFuncTimer++;
+	}
+}
 
-void spiWrite(uint8_t gdzie, uint8_t co)
+void spiWrite(uint8_t handler[2])
 {
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET); //ss set
 
-	HAL_SPI_Transmit(&hspi1, &gdzie, 1, HAL_MAX_DELAY);
-	HAL_SPI_Transmit(&hspi1, &co, 1, HAL_MAX_DELAY);
+	HAL_SPI_Transmit(&hspi1, handler, 2, HAL_MAX_DELAY);
 
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 }
 
-uint8_t spiRead(uint8_t gdzie)
+uint8_t spiRead(uint8_t where)
 {
 	uint8_t read = 0;
-	gdzie|=1<<7;//read
+	where|=1<<7;//read
 
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET); //ss set
 
-	HAL_SPI_Transmit(&hspi1, &gdzie, 1, HAL_MAX_DELAY);
+	HAL_SPI_Transmit(&hspi1, &where, 1, HAL_MAX_DELAY);
 	uint8_t a=0;
 	HAL_SPI_TransmitReceive(&hspi1, &a, &read, 1, HAL_MAX_DELAY);
 
@@ -522,26 +529,101 @@ uint8_t spiRead(uint8_t gdzie)
 
 void spiReadOutput()
 {
-	uint8_t gdzie;
-	uint16_t przod;
-	uint8_t tyl;
-	int16_t hand;
+	uint8_t where;
+	uint16_t msb;
+	uint8_t lsb;
+	uint8_t acc[6];
 
-	gdzie = 50 | 1<<7 | 1<<6;//adr pierwszego rejestru x, read i multiple byte
+	where = 50 | 1<<7 | 1<<6;//adr first register x, read and multiple byte
 
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET); //ss set
 
-	HAL_SPI_Transmit(&hspi1, &gdzie, 1, HAL_MAX_DELAY);
+	HAL_SPI_Transmit(&hspi1, &where, 1, HAL_MAX_DELAY);
 	uint8_t a=0;
 	HAL_SPI_TransmitReceive(&hspi1, &a, acc, 6, HAL_MAX_DELAY);
 
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 
-	przod=acc[1];
-	tyl=acc[0];
-	*pPrzyspieszenie=przod<<8|tyl;
-	hand=przod<<8|tyl;
-	*pAbsPrzyspieszenie=abs(hand);
+	msb=acc[1];
+	lsb=acc[0];
+	acceleration=msb<<8|lsb;
+	absAcceleration=abs(acceleration);
+}
+
+void MainFunc()
+{
+/*STATE CHANGE-------------------------------------------------------------------------------*/
+    if(absAcceleration<(MAXACC-RETURNTHRES))
+    {
+        currSt=PASSTHROUGH;
+    }
+    else if((currSt==PASSTHROUGH) && (absAcceleration>MAXACC))
+    {
+        timeInCurrSt=0;
+        currSt=CENTER;
+    }
+    else if((currSt==CENTER) && (absAcceleration>MAXACC) && (timeInCurrSt>COUNTERTIME) && (acceleration>0))
+    {
+        timeInCurrSt=0;
+        currSt=LEFT;
+    }
+    else if((currSt==CENTER) && (absAcceleration>MAXACC) && (timeInCurrSt>COUNTERTIME) && (acceleration<0))
+    {
+    	timeInCurrSt=0;
+    	currSt=RIGHT;
+    }
+    if(timeInCurrSt>=30000)
+    	timeInCurrSt=0;
+
+    timeInCurrSt++;
+
+/*STATE FUNC----------------------------------------------------------------------------------*/
+    switch(currSt)
+    {
+	case PASSTHROUGH:
+
+		pulseWidth = ((float)((HAL_TIM_ReadCapturedValue(&htim4, TIM_CHANNEL_2)+1))*INPUT_TIMER_PERIOD_DURATION_MILI/PERIOD);
+		sentWidth= CENTERSTEER - ((1.5-pulseWidth)*360.0f);
+		pwm=sentWidth;
+
+		if(!(pwm<LEFT_STEER_THRESHOLD || pwm>RIGHT_STEER_THRESHOLD || abs(pwm-lastpwm)>CHANGE_THRESHOLD))
+		{
+			TIM1->CCR1=pwm;
+			lastpwm=pwm;
+		}
+
+		break;
+
+	case CENTER:
+
+		pwm=CENTERSTEER;
+		TIM1->CCR1=pwm;
+		lastpwm=pwm;
+
+		break;
+
+	case LEFT:
+
+		pwm=LEFTSTEER;
+		TIM1->CCR1=pwm;
+		lastpwm=pwm;
+
+		break;
+
+	case RIGHT:
+
+		pwm=RIGHTSTEER;
+		TIM1->CCR1=pwm;
+		lastpwm=pwm;
+
+		break;
+
+	default:
+		break;
+
+    }
+
+    mainFuncTimer=0;
 }
 /* USER CODE END 4 */
 
