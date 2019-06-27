@@ -10,3 +10,9 @@ testing ARM Cortex M3 32bit procesor in stm32 bluepill
 -passing through RC reciver signal to servo in normal operation
 
 -modifying reciver signal when g-force threshold hit to prevent RC car rollover
+
+system operation:
+https://www.youtube.com/watch?v=xpW5AtOFIHM
+https://www.youtube.com/watch?v=KTWXprwIUBg
+field testing:
+https://www.youtube.com/watch?v=esth-FyKVjk
