@@ -1,7 +1,11 @@
 STM32F103C8T6
-testing stm32 bluepill
+testing ARM Cortex M3 32bit procesor in stm32 bluepill
 
--using adxl345 accelerometer to measure g-force using interrupts
+-state machine modular design
+
+-using cubemx code generator
+
+-using adxl345 accelerometer to measure g-force using interrupts via 4-wire SPI
 
 -passing through RC reciver signal to servo in normal operation
 
